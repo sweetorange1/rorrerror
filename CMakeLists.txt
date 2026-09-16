@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.22 FATAL_ERROR)
 
-project(GridButtonsPluginProject VERSION 1.1.0 LANGUAGES C CXX)
+project(GridButtonsPluginProject VERSION 1.2.0 LANGUAGES C CXX)
 
 # =========================
 # Toolchain / 编译选项（必要最小集）
@@ -45,7 +45,7 @@ juce_add_plugin(
   PRODUCT_NAME
     ${GRID_BUTTONS_PLUGIN_NAME}
   VERSION
-    1.1.0
+    1.2.0
   COMPANY_NAME
     "iisaacbeats.cn"
 

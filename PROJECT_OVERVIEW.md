@@ -7,7 +7,7 @@
 ## 1. 项目概述
 
 ### 1.1 项目定位
-- **产品名**：`rorrerror`（版本：`1.1.0`）
+- **产品名**：`rorrerror`（版本：`1.2.0`）
 - **产品形态**：一款 **破坏性失真 / 故障（Glitch）效果插件**，UI 为 **三列老虎机（Slot Machine）交互**：拖动列 = 搓碟（Scratch），底部横条 = 参数控制。视觉主题为暗红做旧背景 + 循环 glitch 动画，走地下/亚文化美学路线。
 - **发行形态**（在 [CMakeLists.txt](/I:/rorrerror/CMakeLists.txt) 中通过 `juce_add_plugin` 定义）：
   - **Windows**：`VST3` + `Standalone` 独立应用
@@ -395,3 +395,43 @@ I:\rorrerror\
 | [PluginProcessor.cpp](/I:/rorrerror/grid_plugin/source/PluginProcessor.cpp) | 新增 `asymClip`/`clipColumn1`；`waveshapeColumn2` 加 6 分支；`applyColumn3Glitch` 加 5 分支；`kColumn1/2/3MaxIndex` 与增益上限更新 |
 | [PluginEditor.cpp](/I:/rorrerror/grid_plugin/source/PluginEditor.cpp) | 加载 `1_3`/`1_4`/`2_10`~`2_15`/`3_6`~`3_10` 贴图；三列映射与增益上限同步；第三列可视化 switch 加 5 case |
 | [CMakeLists.txt](/I:/rorrerror/CMakeLists.txt) | BinaryData 新增 `1_3`/`1_4`/`2_10`~`2_15`/`3_6`~`3_10` |
+
+---
+
+### 第三轮：宿主参数暴露（自动化 / MIDI CC）+ 窗口大小持久化（v1.2.0）
+
+> 本轮把三列底部横向控制条通过 `AudioProcessorValueTreeState` 暴露给宿主，使 DAW 能对其做自动化或 MIDI CC 映射；并用 `PropertiesFile` 持久化插件窗口大小，解决关闭再打开被重置的问题。版本号 `1.1.0` → `1.2.0`。
+
+#### 8.11 需求一：三列底部控制条暴露给宿主（自动化 / MIDI CC）
+- **背景**：原三个底部控制条（输入增益 / Waveshaper 干湿比 / Glitch 周期）只能打开界面手动调整，未暴露给宿主，DAW 无法做自动化或 MIDI Learn 映射。
+- **方案**：改用 JUCE 标准 `AudioProcessorValueTreeState`（APVTS）注册 3 个宿主参数：
+  - `inputGain`（Input Gain，0~24 dB）
+  - `waveshaperWet`（Waveshaper Wet，0~1）
+  - `glitchPeriod`（Glitch Period，0~1，底层仍由 `mapSlider2ToGlitchPeriodBeats()` 映射到 7 点离散）
+- **双向同步闭环**：
+  - 宿主 → 插件：`parameters.addParameterListener(paramID, this)`（JUCE 8.0.12 新 API，替代旧 `addListener`）→ `parameterChanged` 收到**实际值（denormalised）**，转回归一化写入内部 `std::atomic` → 音频线程下一 block 生效（保留原有一阶平滑，不爆音）。
+  - 插件 → 宿主：Editor 拖动控制条后调 `setParameterValueFromUi()` → `setValueNotifyingHost()`（接收 **0~1 归一化值**）→ 宿主参数面板 / 自动化实时更新。
+- **值语义要点**（易错）：`AudioProcessorParameter::setValue` / `setValueNotifyingHost` 接收 0~1 归一化值；`Listener::parameterChanged` 的 `newValue` 是实际值。
+- **状态持久化**：`setStateInformation` 恢复工程时用 `setValue()` **静默**同步 APVTS（避免触发宿主回调）。
+- **UI 跟随**：Editor `timerCallback` 里轮询 processor 原子值同步到 `sliderNorm`，宿主侧改动也能实时反映到界面。
+
+#### 8.12 需求二：窗口大小持久化
+- **背景**：宿主中关闭再打开插件会重置窗口大小。
+- **方案**：`juce::PropertiesFile`（进程级有意泄漏单例，遵循 §6.3）保存到 `%APPDATA%\iisaacbeats\rorrerror.settings`；构造时 `loadWindowSize()` 恢复、`resized()` 里 `saveWindowSize()`、析构时 `saveIfNeeded()` 落盘。
+- **踩坑与修复**：
+  - `AudioProcessorEditor::setResizeLimits()` 内部会 `setBoundsConstrained(getBounds())`。若在 `setSize` 之前调用（组件还是 0×0），会被强行拉到最小值，并把错误尺寸写进设置文件，导致窗口"特别小"且"保存不了"。
+  - 修复：先 `setSize` 再 `setResizeLimits`；新增 `windowSizeSavingEnabled` 开关，构造期间禁止保存，构造完成后才置 `true`；最小尺寸设 400（默认 720×540 = `background.png` 1440×1080 减半）。
+
+#### 8.13 版本号升级 1.1.0 → 1.2.0
+- 按 §6.6 三处同步 + 额外一致性同步：`CMakeLists.txt`（project VERSION + `juce_add_plugin` VERSION）、`rorrerror_installer.iss`（MyAppVersion）、`PluginEditor.cpp`（About 弹窗硬编码版本）、`grid_plugin.h`（模块 version）、`build_installer.bat`（APP_VERSION 与注释）、`README.md`（badge + 产物名）、本文件 §1.1。
+- 更新检查用 `JucePlugin_VersionString` 自动跟随 CMake，无需手动改。
+
+#### 8.14 本轮涉及文件
+| 文件 | 本轮改动 |
+| --- | --- |
+| [PluginProcessor.h](/I:/rorrerror/grid_plugin/include/Grid/PluginProcessor.h) | 继承 `AudioProcessorValueTreeState::Listener`；新增 `parameters` 成员、`getAPVTS()`/`setParameterValueFromUi()`/`parameterChanged()`/`createParameterLayout()` |
+| [PluginProcessor.cpp](/I:/rorrerror/grid_plugin/source/PluginProcessor.cpp) | 构造函数初始化 APVTS + `addParameterListener`×3；参数创建与双向同步；`setStateInformation` 静默同步 APVTS |
+| [PluginEditor.h](/I:/rorrerror/grid_plugin/include/Grid/PluginEditor.h) | 新增 `saveWindowSize()`/`loadWindowSize()` 声明、`windowSizeSavingEnabled` 标志 |
+| [PluginEditor.cpp](/I:/rorrerror/grid_plugin/source/PluginEditor.cpp) | 控制条拖动后通知宿主；`timerCallback` 轮询同步 UI；`PropertiesFile` 窗口大小持久化；About 弹窗版本 1.2.0 |
+| [CMakeLists.txt](/I:/rorrerror/CMakeLists.txt) | 版本号 1.2.0 |
+| [rorrerror_installer.iss](/I:/rorrerror/rorrerror_installer.iss) | MyAppVersion 1.2.0 |

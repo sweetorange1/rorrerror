@@ -1,5 +1,5 @@
 #define MyAppName "rorrerror"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "iisaacbeats.cn"
 #define MyPluginBundle "rorrerror.vst3"
 

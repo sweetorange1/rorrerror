@@ -5,7 +5,7 @@ BEGIN_JUCE_MODULE_DECLARATION
 
    ID:            grid_plugin
    vendor:        WolfSound
-   version:       1.1.0
+   version:       1.2.0
    name:          Grid Buttons Plugin
    description:   Core of the grid buttons plugin (UI-only skeleton)
    dependencies:  juce_audio_processors, juce_gui_basics, juce_graphics

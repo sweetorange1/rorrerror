@@ -4,6 +4,8 @@
 
 #include "BinaryData.h"
 
+#include <juce_core/juce_core.h>
+
 #include <atomic>
 #include <cmath>
 #include <limits>
@@ -29,6 +31,26 @@ static constexpr float kWheelMaxScale = 1.00f;
 static constexpr float kWheelArcX = 18.0f;       // 横向圆弧位移幅度（像是在绕圆形轨迹）
 static constexpr float kWheelDepthPow = 1.25f;   // 深度曲线（越大越“中心突出”）
 static constexpr float kWheelMinAlpha = 0.55f;   // 远处更淡
+
+// 窗口最小尺寸（防止窗口被缩得过小导致 UI 不可用 / 保存了无效尺寸）。
+// 默认窗口约为 720×540（background.png 1440×1080 减半），最小取 400 足够放下三列老虎机。
+static constexpr int kMinWindowSize = 400;
+
+// 窗口大小持久化：把用户调整后的插件窗口尺寸保存到本机，
+// 关闭再打开插件时恢复，避免每次都被重置为默认大小。
+// 进程级常驻单例（有意泄漏），避免宿主卸载 DLL 阶段做重型析构。
+static juce::PropertiesFile* getWindowSettingsFile() {
+  static juce::PropertiesFile::Options opts = [] {
+    juce::PropertiesFile::Options o;
+    o.applicationName = "rorrerror";
+    o.folderName = "iisaacbeats";
+    o.filenameSuffix = ".settings";
+    o.storageFormat = juce::PropertiesFile::storeAsXML;
+    return o;
+  }();
+  static auto* pf = new juce::PropertiesFile(opts);
+  return pf;
+}
 
 static juce::Image decodePngFromBinaryLocal(const void* data, int size) {
   if (data == nullptr || size <= 0)
@@ -503,7 +525,7 @@ void PluginEditor::showAboutDialog() {
       setupReadOnlyText(feedbackText);
       setupReadOnlyText(licenseText);
 
-      headerText.setText("Plugin Name:rorrerror\nVersion: 1.1.0", false);
+      headerText.setText("Plugin Name:rorrerror\nVersion: 1.2.0", false);
 
       descriptionText.setText(
           "This plugin is completely free and open-source software (FOSS) under a custom \"non-commercial\" open-source license. You are free to use, study, and modify the code, but commercial use is strictly prohibited (including but not limited to reselling, paid distribution, or integration into commercial products).\n\n"
@@ -850,6 +872,25 @@ void PluginEditor::updateSlotSpin() {
   }
 }
 
+bool PluginEditor::loadWindowSize() {
+  if (auto* pf = getWindowSettingsFile()) {
+    const int w = pf->getIntValue("windowWidth", 0);
+    const int h = pf->getIntValue("windowHeight", 0);
+    if (w >= kMinWindowSize && h >= kMinWindowSize) {
+      setSize(w, h);
+      return true;
+    }
+  }
+  return false;
+}
+
+void PluginEditor::saveWindowSize() {
+  if (auto* pf = getWindowSettingsFile()) {
+    pf->setValue("windowWidth", getWidth());
+    pf->setValue("windowHeight", getHeight());
+  }
+}
+
 void PluginEditor::setSliderNormValue(int columnIndex, float norm) {
   if (columnIndex < 0 || columnIndex >= columnCount)
     return;
@@ -882,6 +923,16 @@ void PluginEditor::setSliderNormValue(int columnIndex, float norm) {
   if (columnIndex == 1) {
     processor.setColumn2Wet(norm);
   }
+
+  // 把 UI 交互同步给宿主，让 DAW 的参数面板 / 自动化 / MIDI CC 能感知手动调整。
+  // 注意：setValueNotifyingHost 接收 0~1 归一化值，三个参数的归一化值都等于 sliderNorm。
+  if (columnIndex == 0) {
+    processor.setParameterValueFromUi("inputGain", norm);
+  } else if (columnIndex == 1) {
+    processor.setParameterValueFromUi("waveshaperWet", norm);
+  } else if (columnIndex == 2) {
+    processor.setParameterValueFromUi("glitchPeriod", norm);
+  }
 }
 
 PluginEditor::PluginEditor(PluginProcessor& p)
@@ -891,17 +942,24 @@ PluginEditor::PluginEditor(PluginProcessor& p)
 
   setResizable(true, true);
 
-  // 打开时优先用background.png决定窗口尺寸（快速），动画图集就绪后只切换绘制，不改窗口尺寸。
-  // 默认分辨率减半（长宽各缩小一半）。
-  if (backgroundFallbackImage.isValid())
-    setSize(backgroundFallbackImage.getWidth() / 2, backgroundFallbackImage.getHeight() / 2);
-  else
-    setSize(270, 270);
+  // 优先恢复用户上次的窗口大小；没有保存记录时，再用 background.png 决定初始尺寸。
+  if (!loadWindowSize()) {
+    // 默认分辨率减半（长宽各缩小一半）。
+    if (backgroundFallbackImage.isValid())
+      setSize(backgroundFallbackImage.getWidth() / 2, backgroundFallbackImage.getHeight() / 2);
+    else
+      setSize(kMinWindowSize, kMinWindowSize);
+  }
 
-  // 恢复上一次状态（宿主会通过Processor::setStateInformation恢复到Processor，再由Editor从Processor读取）
-  setSliderNormValue(0, processor.getSlider0Norm());
-  setSliderNormValue(1, processor.getSlider1Norm());
-  setSliderNormValue(2, processor.getSlider2Norm());
+  // 注意：必须在 setSize 之后才设置 resize 限制。setResizeLimits 内部会调用
+  // setBoundsConstrained，若此时组件还是 0x0，会被强行拉到最小值，导致窗口错误地变小。
+  setResizeLimits(kMinWindowSize, kMinWindowSize, 8192, 8192);
+
+  // 恢复上一次状态（宿主会通过Processor::setStateInformation恢复到Processor，再由Editor从Processor读取）。
+  // 这里只同步 UI 的滑块显示，不调用 setSliderNormValue，避免在创建 Editor 阶段向宿主发参数变更通知。
+  sliderNorm[0] = processor.getSlider0Norm();
+  sliderNorm[1] = processor.getSlider1Norm();
+  sliderNorm[2] = processor.getSlider2Norm();
 
   lastBoundsForSelection = getLocalBounds();
   recenterColumnsToProcessorSelection(lastBoundsForSelection);
@@ -912,6 +970,9 @@ PluginEditor::PluginEditor(PluginProcessor& p)
   // 立即把UI状态推送到Processor，确保音频线程参数正确
   pushUiStateToProcessor();
 
+  // 初始尺寸已确定，此后才允许在 resized 中保存窗口大小。
+  windowSizeSavingEnabled = true;
+
   animStartMs = juce::Time::getMillisecondCounterHiRes();
   startTimerHz(60);
 
@@ -921,6 +982,10 @@ PluginEditor::PluginEditor(PluginProcessor& p)
 }
 
 PluginEditor::~PluginEditor() {
+  // 关闭窗口前，把最后的窗口大小落盘（PropertiesFile 通常有节流，这里主动保存一次）。
+  if (auto* pf = getWindowSettingsFile())
+    pf->saveIfNeeded();
+
   telemetrySession.reset();
   // 确保Timer不再触发回调（避免宿主在销毁阶段出现重入/消息线程卡住）
   stopTimer();
@@ -2075,6 +2140,9 @@ void PluginEditor::resized() {
   if (b != lastBoundsForSelection) {
     recenterColumnsToProcessorSelection(b);
     lastBoundsForSelection = b;
+    // 记住用户调整后的窗口大小，关闭再打开时恢复（构造期间不保存）。
+    if (windowSizeSavingEnabled)
+      saveWindowSize();
   }
 }
 
@@ -2395,6 +2463,11 @@ void PluginEditor::timerCallback() {
       snapping[static_cast<size_t>(c)] = false;
     }
   }
+
+  // 同步宿主（自动化 / MIDI CC）对三个控制条的修改到 UI 显示
+  sliderNorm[0] = processor.getSlider0Norm();
+  sliderNorm[1] = processor.getSlider1Norm();
+  sliderNorm[2] = processor.getSlider2Norm();
 
   pushUiStateToProcessor();
   repaint();

@@ -3,12 +3,12 @@ setlocal
 
 REM ============================================================
 REM  rorrerror - Windows Release Installer Builder
-REM  Version : 1.1.0
-REM  Output  : dist\rorrerror_Setup_1.1.0_x64.exe
+REM  Version : 1.2.0
+REM  Output  : dist\rorrerror_Setup_1.2.0_x64.exe
 REM ============================================================
 
 set "APP_NAME=rorrerror"
-set "APP_VERSION=1.1.0"
+set "APP_VERSION=1.2.0"
 set "SCRIPT_DIR=%~dp0"
 set "ISS_FILE=%SCRIPT_DIR%rorrerror_installer.iss"
 set "DIST_DIR=%SCRIPT_DIR%dist"

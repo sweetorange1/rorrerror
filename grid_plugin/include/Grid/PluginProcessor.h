@@ -8,7 +8,8 @@
 
 namespace grid {
 
-class PluginProcessor : public juce::AudioProcessor {
+class PluginProcessor : public juce::AudioProcessor,
+                             public juce::AudioProcessorValueTreeState::Listener {
 public:
   enum class Column1Mode : int {
     SoftClip = 0,  // 1_1.png
@@ -113,7 +114,23 @@ public:
   void setScratchEnabled(bool enabled) noexcept;
   void setScratchRate(float rate) noexcept;
 
+  // --- 宿主自动化 / MIDI CC 参数桥接 ---
+  // 三个底部横向控制条通过 AudioProcessorValueTreeState 暴露给宿主，
+  // 使 DAW 可以对其做自动化或 MIDI CC 映射。
+  juce::AudioProcessorValueTreeState& getAPVTS() noexcept { return parameters; }
+
+  // UI 交互（拖动控制条）后调用：把最新值通知给宿主（触发宿主参数面板/自动化刷新）。
+  void setParameterValueFromUi(const juce::String& parameterID, float value);
+
 private:
+  // 宿主参数变化（自动化 / CC / 参数面板）→ 同步到内部原子状态（供音频线程读取）。
+  void parameterChanged(const juce::String& parameterID, float newValue) override;
+
+  static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+  // 宿主参数树：把三列底部控制条暴露给宿主（自动化 / MIDI CC）。
+  juce::AudioProcessorValueTreeState parameters;
+
   // 2_3专用：55Hz 高通（12dB/oct = 二阶）
   struct Biquad {
     float b0 = 1.0f, b1 = 0.0f, b2 = 0.0f;

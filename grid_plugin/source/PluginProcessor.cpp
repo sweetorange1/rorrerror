@@ -395,7 +395,12 @@ static juce::String GetUpdatePlatformString() {
 PluginProcessor::PluginProcessor()
     : juce::AudioProcessor(
           BusesProperties().withInput("Input", juce::AudioChannelSet::stereo(), true)
-              .withOutput("Output", juce::AudioChannelSet::stereo(), true)) {
+              .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+      parameters(*this, nullptr, "PARAMETERS", createParameterLayout()) {
+  parameters.addParameterListener("inputGain", this);
+  parameters.addParameterListener("waveshaperWet", this);
+  parameters.addParameterListener("glitchPeriod", this);
+
   // 启动时延迟 5 秒检查一次更新（进程级去重，避免多实例重复触发）
   static std::atomic<bool> updateOnceFlag{false};
   if (!updateOnceFlag.exchange(true, std::memory_order_acquire)) {
@@ -411,6 +416,51 @@ PluginProcessor::PluginProcessor()
           });
     });
   }
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParameterLayout() {
+  juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+  // 第一列底部控制条：输入增益 0~24dB（默认 12dB，对应 UI 滑块 0.5）
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID("inputGain", 1),
+      "Input Gain",
+      juce::NormalisableRange<float>(kInputGainDbMin, kInputGainDbMax, 0.01f),
+      kInputGainDbMax * 0.5f,
+      juce::AudioParameterFloatAttributes().withLabel("dB")));
+
+  // 第二列底部控制条：Waveshaper 干湿比 0~100%（默认 50%）
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID("waveshaperWet", 1),
+      "Waveshaper Wet",
+      juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+      0.5f));
+
+  // 第三列底部控制条：Glitch 触发周期（7 点离散，映射到 0..1）
+  layout.add(std::make_unique<juce::AudioParameterFloat>(
+      juce::ParameterID("glitchPeriod", 1),
+      "Glitch Period",
+      juce::NormalisableRange<float>(0.0f, 1.0f, 0.001f),
+      0.5f));
+
+  return layout;
+}
+
+void PluginProcessor::parameterChanged(const juce::String& parameterID, float newValue) {
+  // 宿主（自动化 / MIDI CC / 参数面板）改变参数时，同步到内部原子状态。
+  // 这里调用纯 setter，不会反向通知宿主，从而避免回调循环。
+  if (parameterID == "inputGain") {
+    setSlider0Norm(newValue / kInputGainDbMax);
+  } else if (parameterID == "waveshaperWet") {
+    setSlider1Norm(newValue);
+  } else if (parameterID == "glitchPeriod") {
+    setSlider2Norm(newValue);
+  }
+}
+
+void PluginProcessor::setParameterValueFromUi(const juce::String& parameterID, float value) {
+  if (auto* p = parameters.getParameter(parameterID))
+    p->setValueNotifyingHost(value);
 }
 
 void PluginProcessor::setScratchEnabled(bool enabled) noexcept {
@@ -1391,6 +1441,15 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes) {
   setSlider0Norm(sl0);
   setSlider1Norm(sl1);
   setSlider2Norm(sl2);
+
+  // 同步宿主参数树（静默设置，不触发宿主回调，避免与工程加载流程冲突）。
+  // 注意：setValue 接收 0~1 归一化值，三个参数的归一化值都等于对应的 sliderNorm。
+  if (auto* p = parameters.getParameter("inputGain"))
+    p->setValue(sl0);
+  if (auto* p = parameters.getParameter("waveshaperWet"))
+    p->setValue(sl1);
+  if (auto* p = parameters.getParameter("glitchPeriod"))
+    p->setValue(sl2);
 }
 
 }  // namespace grid

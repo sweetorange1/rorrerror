@@ -88,6 +88,10 @@ private:
   // 记录上一次的bounds，用于在窗口缩放时保持当前居中选择不变
   juce::Rectangle<int> lastBoundsForSelection;
 
+  // 窗口大小保存开关：构造期间 setSize/setResizeLimits 会触发 resized，
+  // 此时不允许保存，否则会把初始化的中间尺寸写入设置文件。构造完成后才置 true。
+  bool windowSizeSavingEnabled = false;
+
   // 第三列Glitch UI反馈（从Processor读取，timer里更新/衰减）
   std::uint32_t col3LastEventCounter = 0;
   float col3Flash = 0.0f;      // 0..1，触发时瞬间拉满后衰减
@@ -127,6 +131,9 @@ private:
   std::array<double, columnCount> slotSpinDurationMs{ { 0.0, 0.0, 0.0 } };
 
   void timerCallback() override;
+
+  void saveWindowSize();
+  bool loadWindowSize();
 
   void updateBackgroundGlitchOverrides();
   void launchGlitchDecode();
