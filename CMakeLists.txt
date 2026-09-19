@@ -3,6 +3,17 @@ cmake_minimum_required(VERSION 3.22 FATAL_ERROR)
 project(GridButtonsPluginProject VERSION 1.2.0 LANGUAGES C CXX)
 
 # =========================
+# macOS：双架构 Universal Binary（同时输出 Intel x86_64 与 Apple Silicon arm64）
+# =========================
+if(APPLE)
+  # 一个 bundle 内同时包含两种 CPU 架构，Intel 与 Apple Silicon Mac 均可原生运行。
+  # 如需只构建单一架构，删除本 set 或改为 "x86_64" / "arm64" 即可。
+  set(CMAKE_OSX_ARCHITECTURES "x86_64;arm64" CACHE STRING "macOS target architectures (Intel + Apple Silicon)" FORCE)
+  # Apple Silicon 要求最低 macOS 11.0（Big Sur）；统一按 11.0 保证两架构都能编译。
+  set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "Minimum macOS version" FORCE)
+endif()
+
+# =========================
 # Toolchain / 编译选项（必要最小集）
 # =========================
 set(CMAKE_CXX_STANDARD 23)
@@ -56,6 +67,7 @@ juce_add_plugin(
 
   FORMATS
     VST3
+    AU
     Standalone
 
   IS_SYNTH
